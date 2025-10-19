@@ -21,6 +21,32 @@ func ParseId(str string) (Id, error) {
 	return Id(n), nil
 }
 
+func ParseIdPair(str string) (id, chapterId Id, err error) {
+	var strId, strChapterId string
+
+	parts := strings.Split(str, ",")
+	strId = strings.TrimSpace(parts[0])
+	if len(parts) > 1 {
+		strChapterId = strings.TrimSpace(parts[1])
+	}
+
+	id, err = ParseId(strId)
+	if err != nil {
+		err = fmt.Errorf("'%s' is not a valid AO3 fiction ID", str)
+		return
+	}
+
+	if len(strChapterId) > 0 {
+		chapterId, err = ParseId(strChapterId)
+		if err != nil {
+			err = fmt.Errorf("'%s' is not a valid AO3 fiction chapter ID", str)
+			return
+		}
+	}
+
+	return
+}
+
 type Rating uint8
 
 const (
@@ -211,21 +237,28 @@ const (
 )
 
 type Fic struct {
+	ChapterInfo struct {
+		Title string
+		Id    Id
+		Num   uint32
+	}
 	Fandoms, Relationships, Characters, Tags                       []string
 	Title, Author, Summary, Language                               string
 	PublishedAt, UpdatedAt                                         time.Time
-	Id, ChapterId                                                  Id
+	Id                                                             Id
 	Words, Chapters, MaxChapters, Comments, Kudos, Bookmarks, Hits uint32
 	Status                                                         Status
 	Rating                                                         Rating
 	Categories                                                     Category
 	ArchiveWarnings                                                ArchiveWarning
+	Favorite                                                       bool
 }
 
-func GetFicFromId(id Id) (f Fic, err error) {
+func GetFicFromId(id, chapterId Id) (f Fic, err error) {
 	f.Id = id
+	f.ChapterInfo.Id = chapterId
 
-	res, err := http.Get(fmt.Sprintf("https://archiveofourown.org/works/%d?view_adult=true", id))
+	res, err := http.Get(fmt.Sprintf("https://archiveofourown.org/works/%d?view_adult=true?hide_banner=true", id))
 	if err != nil {
 		return
 	}
@@ -238,6 +271,15 @@ func GetFicFromId(id Id) (f Fic, err error) {
 	}
 
 	main := root.GetElementByTagName("body").GetElementByID("outer").GetElementByID("inner").GetElementByID("main")
+	work := main.GetElementByClassName("work")
+	workskin := work.GetElementByID("workskin")
+
+	if f.ChapterInfo.Id != 0 {
+		err = f.GetCurrentChapterInfo()
+		if err != nil {
+			return
+		}
+	}
 
 	{
 		headings := main.GetElementsByTagName("h2")
@@ -250,10 +292,7 @@ func GetFicFromId(id Id) (f Fic, err error) {
 		}
 	}
 
-	work := main.GetElementByClassName("work")
-
 	info := work.GetElementByClassName("wrapper").GetElementByTagName("dl")
-
 	items := info.GetElementsByTagName("dd")
 
 	for item := items.Next(); item != nil; item = items.Next() {
@@ -296,7 +335,7 @@ func GetFicFromId(id Id) (f Fic, err error) {
 		}
 	}
 
-	preface := work.GetElementByID("workskin").GetElementByClassName("preface")
+	preface := workskin.GetElementByClassName("preface")
 
 	f.Title = strings.TrimSpace(preface.GetElementByClassName("title").GetChildNode().GetText())
 	f.Author = preface.GetElementByClassName("byline").GetChildNode().GetChildNode().GetText()
@@ -312,6 +351,51 @@ func GetFicFromId(id Id) (f Fic, err error) {
 	f.Summary = strings.Join(parts, "\n\n ")
 
 	return
+}
+
+func (f *Fic) GetCurrentChapterInfo() error {
+	res, err := http.Get(fmt.Sprintf("https://archiveofourown.org/works/%d/chapters/%d?view_adult=true?hide_banner=true", f.Id, f.ChapterInfo.Id))
+	if err != nil {
+		return err
+	}
+
+	defer res.Body.Close()
+
+	root, err := GoHtml.Decode(res.Body)
+	if err != nil {
+		return err
+	}
+
+	main := root.GetElementByTagName("body").GetElementByID("outer").GetElementByID("inner").GetElementByID("main")
+	work := main.GetElementByClassName("work")
+	workskin := work.GetElementByID("workskin")
+
+	chapters := workskin.GetElementByID("chapters")
+	chapter := chapters.GetChildNode()
+
+	chns, _ := chapter.GetAttribute("id")
+
+	parts := strings.Split(chns, "-")
+
+	chn, err := strconv.ParseUint(strings.TrimSpace(parts[len(parts)-1]), 10, 32)
+	if err != nil {
+		return err
+	}
+
+	f.ChapterInfo.Num = uint32(chn)
+
+	preface := chapter.GetElementsByClassName("chapter")
+	titleParent := preface.Next()
+	titleNode := titleParent.GetElementByClassName("title")
+
+	if titleNode == nil {
+		titleParent = preface.Next()
+		titleNode = titleParent.GetElementByClassName("title")
+	}
+
+	f.ChapterInfo.Title = strings.TrimSpace(strings.Join(strings.Split(titleNode.GetInnerText(), ":")[1:], ":"))
+
+	return nil
 }
 
 func (f *Fic) FormatSmall() string {
@@ -337,6 +421,12 @@ func (f *Fic) String() string {
 		status = "\n" + f.Status.Format(f.UpdatedAt)
 	}
 
+	var currentChapter string
+
+	if f.ChapterInfo.Id != 0 {
+		currentChapter = fmt.Sprintf("\nCurrent Chapter: %d, `%s` (id %d)", f.ChapterInfo.Num, f.ChapterInfo.Title, f.ChapterInfo.Id)
+	}
+
 	return fmt.Sprintf(`Title: %s
 Author: %s
 Rating: %s
@@ -348,7 +438,7 @@ Characters: %s
 Tags: %s
 Language: %s
 Published At: %s%s
-Chapters: %d/%s
+Chapters: %d/%s%s
 Comments: %d
 Kudos: %d
 Bookmarks: %d
@@ -369,6 +459,7 @@ Summary:
 		status,
 		f.Chapters,
 		maxChapters,
+		currentChapter,
 		f.Comments,
 		f.Kudos,
 		f.Bookmarks,

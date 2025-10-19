@@ -11,9 +11,11 @@ import (
 var addCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Adds a fanfiction to the storage.",
+	Long: `Adds a fanfiction to the storage.
+Use the format '[id],[chapter id]' to additional give a fiction a current chapter.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		for _, a := range args {
-			id, err := fic.ParseId(a)
+			id, chapterId, err := fic.ParseIdPair(a)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err.Error())
 				continue
@@ -24,7 +26,7 @@ var addCmd = &cobra.Command{
 				continue
 			}
 
-			fic, err := fic.GetFicFromId(id)
+			fic, err := fic.GetFicFromId(id, chapterId)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err.Error())
 				continue
@@ -33,7 +35,11 @@ var addCmd = &cobra.Command{
 			store.Ids[id] = uint32(len(store.Fics))
 			store.Fics = append(store.Fics, fic)
 
-			fmt.Printf("Added the fiction `%s` to the storage\n", fic.Title)
+			if fic.ChapterInfo.Id != 0 {
+				fmt.Printf("Added the fiction `%s` (with current chapter %d, `%s`, id %d) to the storage\n", fic.Title, fic.ChapterInfo.Num, fic.ChapterInfo.Title, fic.ChapterInfo.Id)
+			} else {
+				fmt.Printf("Added the fiction `%s` to the storage\n", fic.Title)
+			}
 		}
 	},
 }

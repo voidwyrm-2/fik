@@ -13,14 +13,21 @@ import (
 
 var version string
 
-type Store struct {
+type Folder struct {
 	Ids  map[fic.Id]uint32
 	Fics []fic.Fic
 }
 
+type Store struct {
+	Ids     map[fic.Id]uint32
+	Fics    []fic.Fic
+	Folders map[string]Folder
+}
+
 var store = Store{
-	Ids:  map[fic.Id]uint32{},
-	Fics: []fic.Fic{},
+	Ids:     map[fic.Id]uint32{},
+	Fics:    []fic.Fic{},
+	Folders: map[string]Folder{},
 }
 
 var rootCmd = &cobra.Command{
