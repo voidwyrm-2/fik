@@ -2,37 +2,60 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/voidwyrm-2/fik/internal/fic"
 )
 
+var removeFlag_file *string
+
 var removeCmd = &cobra.Command{
 	Use:   "remove",
 	Short: "Removes a fanfiction from the storage.",
-	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		id, err := fic.ParseId(args[0])
-		if err != nil {
-			return err
+		var entries []string
+
+		if len(*removeFlag_file) > 0 {
+			data, err := os.ReadFile(*removeFlag_file)
+			if err != nil {
+				return err
+			}
+
+			entries = strings.Fields(string(data))
+		} else {
+			entries = args
 		}
 
-		if idx, ok := store.Ids[id]; ok {
-			delete(store.Ids, id)
+		for _, entry := range entries {
+			if len(entry) == 0 {
+				continue
+			}
 
-			oldFic := store.Fics[idx]
+			id, _, err := fic.ParseFicEntry(entry)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err.Error())
+				continue
+			}
 
-			newFics := make([]fic.Fic, 0, len(store.Fics)-1)
+			if idx, ok := store.Ids[id]; ok {
+				delete(store.Ids, id)
 
-			newFics = append(newFics, store.Fics[:idx]...)
+				oldFic := store.Fics[idx]
 
-			newFics = append(newFics, store.Fics[idx+1:]...)
+				newFics := make([]fic.Fic, 0, len(store.Fics)-1)
 
-			store.Fics = newFics
+				newFics = append(newFics, store.Fics[:idx]...)
 
-			fmt.Printf("Fiction `%s` (ID %d) from storage\n", oldFic.Title, id)
-		} else {
-			return fmt.Errorf("No fiction with ID %d in storage", id)
+				newFics = append(newFics, store.Fics[idx+1:]...)
+
+				store.Fics = newFics
+
+				fmt.Printf("Fiction `%s` (ID %d) from storage\n", oldFic.Title, id)
+			} else {
+				fmt.Fprintf(os.Stderr, "No fiction with ID %d in storage\n", id)
+			}
 		}
 
 		return nil
@@ -40,5 +63,6 @@ var removeCmd = &cobra.Command{
 }
 
 func init() {
+	removeFlag_file = removeCmd.Flags().StringP("file", "f", "", "Read the fictions from a file.")
 	rootCmd.AddCommand(removeCmd)
 }

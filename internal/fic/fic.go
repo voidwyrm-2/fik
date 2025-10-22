@@ -10,43 +10,6 @@ import (
 	"github.com/udan-jayanith/GoHTML"
 )
 
-type Id uint32
-
-func ParseId(str string) (Id, error) {
-	n, err := strconv.ParseUint(str, 10, 32)
-	if err != nil {
-		return 0, fmt.Errorf("'%s' is not a valid AO3 fiction ID", str)
-	}
-
-	return Id(n), nil
-}
-
-func ParseIdPair(str string) (id, chapterId Id, err error) {
-	var strId, strChapterId string
-
-	parts := strings.Split(str, ",")
-	strId = strings.TrimSpace(parts[0])
-	if len(parts) > 1 {
-		strChapterId = strings.TrimSpace(parts[1])
-	}
-
-	id, err = ParseId(strId)
-	if err != nil {
-		err = fmt.Errorf("'%s' is not a valid AO3 fiction ID", str)
-		return
-	}
-
-	if len(strChapterId) > 0 {
-		chapterId, err = ParseId(strChapterId)
-		if err != nil {
-			err = fmt.Errorf("'%s' is not a valid AO3 fiction chapter ID", str)
-			return
-		}
-	}
-
-	return
-}
-
 type Rating uint8
 
 const (
@@ -254,7 +217,7 @@ type Fic struct {
 	Favorite                                                       bool
 }
 
-func GetFicFromId(id, chapterId Id) (f Fic, err error) {
+func GetFicFromId(id, chapterId Id, defaultToFirstChapter bool) (f Fic, err error) {
 	f.Id = id
 	f.ChapterInfo.Id = chapterId
 
@@ -273,6 +236,33 @@ func GetFicFromId(id, chapterId Id) (f Fic, err error) {
 	main := root.GetElementByTagName("body").GetElementByID("outer").GetElementByID("inner").GetElementByID("main")
 	work := main.GetElementByClassName("work")
 	workskin := work.GetElementByID("workskin")
+
+	if defaultToFirstChapter && f.ChapterInfo.Id == 0 {
+		nav := work.GetElementByClassName("work navigation actions")
+		items := nav.GetElementsByClassName("chapter")
+
+		for n := items.Next(); n != nil; n = items.Next() {
+			if attr, ok := n.GetAttribute("aria-haspopup"); ok && attr == "true" {
+				ul := n.GetElementByID("chapter_index")
+				items := ul.GetElementsByTagName("li")
+				li := items.Next()
+
+				if li.GetElementByTagName("form") == nil {
+					li = items.Next()
+				}
+
+				action, _ := li.GetElementByTagName("form").GetAttribute("action")
+				parts := strings.Split(action, "/")
+
+				f.ChapterInfo.Id, err = ParseId(parts[len(parts)-1])
+				if err != nil {
+					return
+				}
+
+				break
+			}
+		}
+	}
 
 	if f.ChapterInfo.Id != 0 {
 		err = f.GetCurrentChapterInfo()
@@ -338,7 +328,16 @@ func GetFicFromId(id, chapterId Id) (f Fic, err error) {
 	preface := workskin.GetElementByClassName("preface")
 
 	f.Title = strings.TrimSpace(preface.GetElementByClassName("title").GetChildNode().GetText())
-	f.Author = preface.GetElementByClassName("byline").GetChildNode().GetChildNode().GetText()
+
+	{
+		n := preface.GetElementByClassName("byline").GetChildNode()
+
+		if cn := n.GetChildNode(); cn != nil {
+			f.Author = cn.GetText()
+		} else {
+			f.Author = n.GetText()
+		}
+	}
 
 	summaryNodes := preface.GetElementByClassName("summary").GetElementByTagName("blockquote").GetElementsByTagName("p")
 
